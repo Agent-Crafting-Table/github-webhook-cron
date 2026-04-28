@@ -1,0 +1,13 @@
+{
+  "owner_logins": ["yourname"],
+  "feature_branch_regex": "^refs/heads/feat/",
+  "rules": {
+    "pull_request.opened": "reviewer",
+    "pull_request.ready_for_review": "reviewer",
+    "pull_request.synchronize": "reviewer",
+    "pull_request.reopened": "reviewer",
+    "pull_request.closed.merged": "merge-watcher",
+    "pull_request_review.submitted.by_owner": "reviewer",
+    "push.feature_branch": "reviewer"
+  }
+}

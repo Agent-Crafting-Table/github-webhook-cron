@@ -1,0 +1,17 @@
+{
+  "name": "github-webhook-cron",
+  "version": "0.1.0",
+  "description": "Route GitHub webhook events to cron-framework triggers",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node test/webhook-handler.test.js",
+    "server": "node src/webhook-server.js"
+  },
+  "bin": {
+    "webhook-handler": "src/webhook-handler.js",
+    "webhook-server": "src/webhook-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
