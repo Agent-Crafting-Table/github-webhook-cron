@@ -1,3 +1,4 @@
+6dce8f4bad79baf852f998bffa42e6b6cd23138e
 # github-webhook-cron — Event-Driven Wakes for [cron-framework](https://github.com/Agent-Crafting-Table/cron-framework)
 
 Route GitHub webhook events to cron-framework triggers. Replaces "poll every 10 minutes hoping there's something to do" with "wake up exactly when GitHub tells us to."
@@ -9,26 +10,21 @@ Route GitHub webhook events to cron-framework triggers. Replaces "poll every 10 
 ```mermaid
 sequenceDiagram
     participant GH as GitHub
-    participant WS as webhook-server.js
-(PORT 7456)
+    participant WS as webhook-server.js (PORT 7456)
     participant WH as webhook-handler.js
     participant TF as crons/triggers/
-    participant CR as cron-runner
-(60s tick)
+    participant CR as cron-runner (60s tick)
     participant AG as Claude Agent
 
-    GH->>WS: POST /webhook
-(pull_request, push, review...)
+    GH->>WS: POST /webhook (pull_request, push, review...)
     WS->>WS: Buffer request body
     WS->>WH: Pipe payload via stdin
-    WH->>WH: Verify HMAC SHA-256
-signature
+    WH->>WH: Verify HMAC SHA-256 signature
     alt invalid signature
         WH-->>WS: exit 1
         WS-->>GH: 403
     else valid
-        WH->>WH: Look up routing rule
-in crons/routes.json
+        WH->>WH: Look up routing rule in crons/routes.json
         alt no rule match
             WH-->>GH: 200 {"action":"ignored"}
         else rule matched
@@ -196,3 +192,5 @@ Rough estimate from running this on a 5-agent fleet:
 ## License
 
 Apache-2.0
+
+---
