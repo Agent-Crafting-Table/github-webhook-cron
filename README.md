@@ -4,25 +4,71 @@ Route GitHub webhook events to cron-framework triggers. Replaces "poll every 10 
 
 > Part of [The Agent Crafting Table](https://github.com/Agent-Crafting-Table) — standalone agent system components for Claude Code.
 
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant GH as GitHub
+    participant WS as webhook-server.js
+(PORT 7456)
+    participant WH as webhook-handler.js
+    participant TF as crons/triggers/
+    participant CR as cron-runner
+(60s tick)
+    participant AG as Claude Agent
+
+    GH->>WS: POST /webhook
+(pull_request, push, review...)
+    WS->>WS: Buffer request body
+    WS->>WH: Pipe payload via stdin
+    WH->>WH: Verify HMAC SHA-256
+signature
+    alt invalid signature
+        WH-->>WS: exit 1
+        WS-->>GH: 403
+    else valid
+        WH->>WH: Look up routing rule
+in crons/routes.json
+        alt no rule match
+            WH-->>GH: 200 {"action":"ignored"}
+        else rule matched
+            WH->>TF: write crons/triggers/reviewer.trigger
+            WH-->>GH: 200 {"action":"triggered"}
+            CR->>TF: detect trigger file on next 60s tick
+            CR->>AG: spawn Claude agent for job
+            AG->>TF: delete trigger file
+        end
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph "Routing Rules (routes.json)"
+        R1["pull_request.opened → reviewer"]
+        R2["pull_request.synchronize → reviewer"]
+        R3["pull_request.closed.merged → merge-watcher"]
+        R4["pull_request_review.submitted.by_owner → reviewer"]
+        R5["push.feature_branch → reviewer"]
+        R6["pull_request (draft) → ignored"]
+        R7["pull_request_review (non-owner) → ignored"]
+    end
+
+    subgraph "Token Savings"
+        BEFORE["Before: poll every 10 min
+144 polls/day
+~720k idle tokens/day"]
+        AFTER["After: webhook triggers only
+~10 fires/day
+~50k tokens/day"]
+        BEFORE -->|"github-webhook-cron"| AFTER
+    end
+```
+
 ## What This Solves
 
 Cron agents that watch GitHub (PR reviewers, merge watchers, CI fixers) typically poll on a fixed schedule. ~80% of those polls find nothing to do — they spin a Claude session, list open PRs, see no new state, and exit. On a Max plan that's hundreds of empty token spins per day.
 
 This repo flips it. GitHub fires a webhook on PR open / sync / review / close / push. The handler drops a trigger file at `crons/triggers/<jobId>.trigger`. The cron-runner picks it up on its next 60s tick and fires the agent **only when there's actually something to look at**. Empty polls go to zero.
-
-## How It Works
-
-```
-  GitHub  ─POST─►  webhook-server  ─stdin─►  webhook-handler  ─writes─►  crons/triggers/reviewer.trigger
-                                                                                  │
-                                                                         (cron-framework picks up
-                                                                          on next 60s tick → fires
-                                                                          the reviewer agent)
-```
-
-- **`src/webhook-server.js`** — minimal HTTP server (PORT, default 7456) accepting `POST /webhook`. Buffers the request body and pipes it to the handler.
-- **`src/webhook-handler.js`** — reads payload from stdin, verifies HMAC signature, looks up the routing rule, drops the trigger file. Exit 0 on success.
-- **`examples/routes.json`** — your routing config: which (event, action) pairs map to which trigger names.
 
 ## Setup
 
@@ -79,8 +125,6 @@ WORKSPACE_DIR=$(pwd) \
 node src/webhook-server.js
 ```
 
-Wrap in tmux / a docker service unit / a restart loop — the server has no state, restart freely.
-
 ### 5. Expose it to GitHub
 
 GitHub needs a public URL. Three options:
@@ -96,9 +140,7 @@ In your repo → Settings → Webhooks → Add webhook:
 - **Payload URL**: `https://your-public-url/webhook`
 - **Content type**: `application/json`
 - **Secret**: the value of `GITHUB_WEBHOOK_SECRET`
-- **Events**: select Pull requests, Pull request reviews, and Pushes (or "Send everything" if you'll add more rules later)
-
-GitHub will send a `ping` event immediately — the handler acks it with `{"action":"ignored","reason":"ping acknowledged"}` and a 200.
+- **Events**: select Pull requests, Pull request reviews, and Pushes
 
 ## Routing Rules
 
@@ -115,11 +157,7 @@ GitHub will send a `ping` event immediately — the handler acks it with `{"acti
 | `push` | ref does not match | (built-in) | ignored |
 | anything else | always | (no rule) | ignored |
 
-Anything not matched → `{"action":"ignored"}` and HTTP 200. The handler never errors on unknown events.
-
 ## CLI / Testing
-
-You can pipe payloads through the handler directly without the server:
 
 ```bash
 cat payload.json | node src/webhook-handler.js \
@@ -129,8 +167,6 @@ cat payload.json | node src/webhook-handler.js \
 
 # {"action":"dry-run","reason":"pr.opened #12","trigger":"reviewer"}
 ```
-
-`--dry-run` prints the decision without writing the trigger file.
 
 ## Tests
 
@@ -142,9 +178,9 @@ node test/webhook-handler.test.js
 
 ## Safety Notes
 
-- **Always set `GITHUB_WEBHOOK_SECRET`** in production. Without it the handler will accept any payload, and the server has no other auth.
-- The trigger files are empty — they only contain the agent's job ID via the filename. No risk of payload smuggling.
-- The handler runs `JSON.parse` + small string operations; no shell-out, no eval. Safe to expose to GitHub's payload size (max ~5MB enforced by the server).
+- **Always set `GITHUB_WEBHOOK_SECRET`** in production. Without it the handler will accept any payload.
+- The trigger files are empty — no risk of payload smuggling.
+- The handler runs `JSON.parse` + small string operations; no shell-out, no eval.
 - The server has no TLS — terminate TLS at your reverse proxy / tunnel.
 
 ## Token-Savings Math
@@ -156,8 +192,6 @@ Rough estimate from running this on a 5-agent fleet:
 | 144 polls/day | ~10 webhook fires/day |
 | 144 Claude spins | 10 Claude spins |
 | ~720k tokens/day idle reading | ~50k tokens/day idle reading |
-
-Multiply by your number of GitHub-watching agents. The savings compound across reviewer + merge-watcher + ci-fixer + supervisor — anywhere you'd otherwise be polling.
 
 ## License
 
